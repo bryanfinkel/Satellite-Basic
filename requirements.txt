@@ -24,3 +24,10 @@ starlette==0.41.3
 typing_extensions==4.12.2
 tzdata==2024.2
 uvicorn==0.32.1
+# Additional required packages for STAC functionality
+pystac-client>=0.8.5
+stackstac[viz]>=0.4.0
+rioxarray>=0.13.0
+httpx>=0.23.0
+geopandas>=0.9
+matplotlib>=3.4.0
