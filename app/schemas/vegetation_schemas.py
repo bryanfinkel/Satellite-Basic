@@ -24,3 +24,10 @@ class VegetationAnalysisRequest(BaseModel):
     name: str
     geometry: Geometry
     date_range: DateRange
+
+class VegetationAnalysisResponse(BaseModel):
+    status: str
+    analysis_id: str
+    name: str
+    statistics: dict
+    bbox: List[float]

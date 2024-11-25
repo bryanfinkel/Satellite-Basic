@@ -1,10 +1,9 @@
-
 # File: app/core/stac_client.py
 # Path: Satellite-Basic/app/core/stac_client.py
 # Description: STAC Client interface for AWS Earth Search API
-#   - Handles satellite imagery search and retrieval
-#   - Manages STAC API connections and queries
-#   - Processes search criteria (bbox, dates, bands)
+# - Handles satellite imagery search and retrieval
+# - Manages STAC API connections and queries
+# - Processes search criteria (bbox, dates, bands)
 
 from pystac_client import Client
 from typing import Dict, List, Tuple
@@ -39,7 +38,7 @@ class STACClient:
                 limit=400,
                 max_items=max_items
             )
-            
+
             # Convert STAC items to dictionaries to avoid recursion
             items = [item.to_dict() for item in search.item_collection()]
             logger.info(f"Found {len(items)} items")
@@ -49,7 +48,6 @@ class STACClient:
                 "count": len(items),
                 "items": items
             }
-            
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
             return {
