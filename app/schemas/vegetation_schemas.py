@@ -31,3 +31,18 @@ class VegetationAnalysisResponse(BaseModel):
     name: str
     statistics: dict
     bbox: List[float]
+    
+class AnalysisMetadata(BaseModel):
+    name: str
+    bbox: List[float]
+    red_url: str
+    nir_url: str
+
+class NDVIAnalysisData(BaseModel):
+    ndvi_array: List[List[float]]
+    metadata: AnalysisMetadata
+
+class LocationAnalysisRequest(BaseModel):
+    location: str  # City name or full address
+    distance_km: float
+    location_type: str = "address"  # "address" or "city"

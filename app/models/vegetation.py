@@ -16,6 +16,7 @@ class NDVIAnalysis(Base):
     bbox = Column(ARRAY(Float))
     geometry = Column(Geometry('POLYGON', srid=4326))  # Added SRID
     ndvi_stats = Column(JSON)
+    ndvi_array = Column(JSON)  # Add this line
     created_at = Column(DateTime, default=datetime.utcnow)
     red_url = Column(String)
     nir_url = Column(String)

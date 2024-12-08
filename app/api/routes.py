@@ -1,113 +1,25 @@
-# File: app/api/routes.py
-# Path: Satellite-Basic/app/api/routes.py
-# Description: API routes for satellite analysis and visualization
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.services.vegetation_analysis import VegetationAnalysis
 from app.services.visualization_service import VisualizationService
+from app.services.geocoding_service import GeocodingService
 from app.core.stac_client import STACClient
-from app.schemas.vegetation_schemas import VegetationAnalysisRequest
+from app.schemas.vegetation_schemas import (
+    VegetationAnalysisRequest, 
+    AnalysisMetadata,
+    LocationAnalysisRequest,
+    DateRange
+)
 from fastapi.responses import HTMLResponse
-from typing import Optional, Dict, List
-import numpy as np
+from typing import Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Initialize services
 router = APIRouter()
 stac_client = STACClient()
-vegetation_service = VegetationAnalysis()
 visualization_service = VisualizationService()
-
-@router.get("/ndvi-map/{analysis_id}", response_class=HTMLResponse)
-async def get_ndvi_map(analysis_id: str, db: Session = Depends(get_db)):
-    try:
-        # Initialize vegetation service with database session
-        va = VegetationAnalysis(db)
-        
-        # Get the analysis data
-        analysis = await va.get_analysis(analysis_id)
-        if not analysis:
-            raise HTTPException(status_code=404, detail="Analysis not found")
-            
-        # Create map using the stored NDVI array
-        map_display = await va.create_map_display(
-            ndvi_array=analysis["ndvi_array"],
-            bbox=analysis["metadata"]["bbox"],
-            title=f"NDVI Analysis: {analysis['metadata']['name']}"
-        )
-        
-        return map_display._repr_html_()
-        
-    except Exception as e:
-        logger.error(f"Failed to generate NDVI map: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@router.post("/analyze-area")
-async def analyze_area(
-    bbox: list[float],
-    start_date: str,
-    end_date: str,
-    db: Session = Depends(get_db)
-):
-    """Analyze an area and create NDVI visualization"""
-    try:
-        # Initialize vegetation service with database session
-        va = VegetationAnalysis(db)
-        
-        # Get satellite imagery
-        search_results = await stac_client.search_images(
-            bbox=bbox,
-            date_range=(start_date, end_date)
-        )
-        
-        if not search_results["items"]:
-            raise HTTPException(status_code=404, detail="No imagery found")
-            
-        # Get first item
-        item = search_results["items"][0]
-        red_url = item["assets"]["red"]["href"]
-        nir_url = item["assets"]["nir"]["href"]
-        
-        # Compute NDVI
-        ndvi_result = await va.compute_ndvi(red_url, nir_url)
-        
-        # Store analysis
-        analysis_id = await va.store_analysis(ndvi_result, {
-            "name": f"Area Analysis {start_date}",
-            "bbox": bbox,
-            "red_url": red_url,
-            "nir_url": nir_url
-        })
-        
-        return {"analysis_id": analysis_id}
-        
-    except Exception as e:
-        logger.error(f"Analysis failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/search")
-async def search_images(
-    min_lon: float,
-    min_lat: float,
-    max_lon: float,
-    max_lat: float,
-    start_date: str,
-    end_date: str
-):
-    """Search for satellite images in a given area and time range"""
-    try:
-        bbox = [min_lon, min_lat, max_lon, max_lat]
-        results = await stac_client.search_images(
-            bbox=bbox,
-            date_range=(start_date, end_date)
-        )
-        return {"status": "success", "results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/vegetation/ndvi")
 async def analyze_vegetation(
@@ -116,7 +28,8 @@ async def analyze_vegetation(
 ):
     """Analyze vegetation using NDVI"""
     try:
-        # Get bounding box from geometry
+        logger.info(f"Processing vegetation analysis request for area: {request.name}")
+        
         coords = request.geometry.coordinates[0]
         bbox = [
             min(x[0] for x in coords),  # min_lon
@@ -124,17 +37,16 @@ async def analyze_vegetation(
             max(x[0] for x in coords),  # max_lon
             max(x[1] for x in coords)   # max_lat
         ]
-
-        # Initialize vegetation service with db session
+        
         va = VegetationAnalysis(db)
-
+        
         # Search for images
         items = await stac_client.search_images(
             bbox=bbox,
             date_range=(request.date_range.start_date, request.date_range.end_date)
         )
 
-        if not items['items']:
+        if not items.get('items'):
             raise HTTPException(status_code=404, detail="No imagery found")
 
         # Process NDVI
@@ -143,13 +55,16 @@ async def analyze_vegetation(
             items['items'][0]['assets']['nir']['href']
         )
 
-        # Store analysis and get ID
-        analysis_id = await va.store_analysis(ndvi_result, {
-            "name": request.name,
-            "bbox": bbox,
-            "red_url": items['items'][0]['assets']['red']['href'],
-            "nir_url": items['items'][0]['assets']['nir']['href']
-        })
+        # Create metadata with validated data
+        metadata = AnalysisMetadata(
+            name=request.name,
+            bbox=bbox,
+            red_url=items['items'][0]['assets']['red']['href'],
+            nir_url=items['items'][0]['assets']['nir']['href']
+        )
+        
+        # Store analysis
+        analysis_id = await va.store_analysis(ndvi_result, metadata)
 
         # Compute statistics
         stats = await va.compute_statistics(ndvi_result)
@@ -163,30 +78,67 @@ async def analyze_vegetation(
         }
 
     except Exception as e:
+        logger.error(f"Analysis failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/visualization/map/{analysis_id}", response_class=HTMLResponse)
 async def get_map(analysis_id: str, db: Session = Depends(get_db)):
+    """Get map visualization for a specific analysis"""
     try:
-        # Initialize vegetation service
         va = VegetationAnalysis(db)
         
-        # Get analysis data
         analysis = await va.get_analysis(analysis_id)
         if not analysis:
             raise HTTPException(status_code=404, detail="Analysis not found")
 
-        # Create map
         map_display = await va.create_map_display(
             ndvi_array=analysis["ndvi_array"],
             bbox=analysis["metadata"]["bbox"],
             title=f"NDVI Analysis: {analysis['metadata']['name']}"
         )
 
-        # Return HTML representation
         return map_display._repr_html_()
 
     except Exception as e:
+        logger.error(f"Failed to generate map: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     
-
+@router.post("/vegetation/location")
+async def analyze_location(
+    request: LocationAnalysisRequest,
+    db: Session = Depends(get_db)
+):
+    """Analyze vegetation for location"""
+    try:
+        # Get bbox from location
+        geocoding = GeocodingService()
+        bbox = await geocoding.get_location_bbox(request.location, request.distance_km)
+        
+        # Create geometry
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[
+                [bbox[0], bbox[1]],  # SW
+                [bbox[0], bbox[3]],  # NW
+                [bbox[2], bbox[3]],  # NE
+                [bbox[2], bbox[1]],  # SE
+                [bbox[0], bbox[1]]   # SW (close polygon)
+            ]]
+        }
+        
+        # Convert to vegetation request
+        veg_request = VegetationAnalysisRequest(
+            name=f"Analysis: {request.location}",
+            geometry=geometry,
+            date_range=DateRange(
+                start_date="2024-01-01",
+                end_date="2024-01-31"
+            )
+        )
+        
+        return await analyze_vegetation(veg_request, db)
+    except Exception as e:
+        logger.error(f"Location analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
